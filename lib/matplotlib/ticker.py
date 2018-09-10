@@ -705,6 +705,8 @@ class ScalarFormatter(Formatter):
         # if scientific notation is to be used, find the appropriate exponent
         # if using an numerical offset, find the exponent after applying the
         # offset. When lower power limit = upper <> 0, use provided exponent.
+        #TODO: take into account if MaxNLocator._integer == True
+
         if not self._scientific:
             self.orderOfMagnitude = 0
             return
@@ -717,9 +719,15 @@ class ScalarFormatter(Formatter):
             oom = math.floor(math.log10(range))
         else:
             if locs[0] > locs[-1]:
-                val = locs[0]
+                if self.MaxNLocator._integer:
+                    val = locs[-1]
+                else:
+                    val = locs[0]
             else:
-                val = locs[-1]
+                if self.MaxNLocator._integer:
+                    val = locs[0]
+                else:
+                    val = locs[-1]
             if val == 0:
                 oom = 0
             else:
@@ -730,6 +738,7 @@ class ScalarFormatter(Formatter):
             self.orderOfMagnitude = oom
         else:
             self.orderOfMagnitude = 0
+
 
     def _set_format(self, vmin, vmax):
         # set the format string to format all the ticklabels
@@ -1940,12 +1949,14 @@ class MaxNLocator(Locator):
         _vmin = vmin - offset
         _vmax = vmax - offset
         raw_step = (_vmax - _vmin) / nbins
-        steps = self._extended_steps * scale
+        steps = self._extended_steps
+        print(steps)
         if self._integer:
             # For steps > 1, keep only integer values.
-            igood = (steps < 1) | (np.abs(steps - np.round(steps)) < 0.001)
-            steps = steps[igood]
-
+            igood = (steps >= 1) & (np.abs(steps - np.round(steps)) < 0.001)
+            print(igood)
+            steps = steps[igood] * scale
+            print(steps)
         istep = np.nonzero(steps >= raw_step)[0][0]
 
         # Classic round_numbers mode may require a larger step.
@@ -1978,6 +1989,7 @@ class MaxNLocator(Locator):
             nticks = ((ticks <= _vmax) & (ticks >= _vmin)).sum()
             if nticks >= self._min_n_ticks:
                 break
+        print(ticks)
         return ticks + offset
 
     def __call__(self):
