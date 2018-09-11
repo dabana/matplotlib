@@ -967,6 +967,8 @@ class Axis(artist.Artist):
         majorLocs = self.major.locator()
         majorTicks = self.get_major_ticks(len(majorLocs))
         self.major.formatter.set_locs(majorLocs)
+        integer_prop = self.major.locator.get_integer()
+        self.major.formatter.set_integer(integer_prop)
         majorLabels = [self.major.formatter(val, i)
                        for i, val in enumerate(majorLocs)]
 

@@ -506,6 +506,7 @@ class ScalarFormatter(Formatter):
         self.orderOfMagnitude = 0
         self.format = ''
         self._scientific = True
+        self._integer = False
         self._powerlimits = rcParams['axes.formatter.limits']
         if useLocale is None:
             useLocale = rcParams['axes.formatter.use_locale']
@@ -572,6 +573,9 @@ class ScalarFormatter(Formatter):
         .. seealso:: Method :meth:`set_powerlimits`
         """
         self._scientific = bool(b)
+        
+    def set_integer(self, MaxNlocator_integer):
+        self._integer = MaxNlocator_integer
 
     def set_powerlimits(self, lims):
         """
@@ -657,6 +661,7 @@ class ScalarFormatter(Formatter):
             if self._useOffset:
                 self._compute_offset()
             self._set_orderOfMagnitude(d)
+            print("Ordre of magnitude is: " + str(self.orderOfMagnitude))
             self._set_format(vmin, vmax)
 
     def _compute_offset(self):
@@ -706,7 +711,7 @@ class ScalarFormatter(Formatter):
         # if using an numerical offset, find the exponent after applying the
         # offset. When lower power limit = upper <> 0, use provided exponent.
         #TODO: take into account if MaxNLocator._integer == True
-
+        print("self._integer is: " + str(self._integer))
         if not self._scientific:
             self.orderOfMagnitude = 0
             return
@@ -719,12 +724,12 @@ class ScalarFormatter(Formatter):
             oom = math.floor(math.log10(range))
         else:
             if locs[0] > locs[-1]:
-                if self.MaxNLocator._integer:
+                if self._integer:
                     val = locs[-1]
                 else:
                     val = locs[0]
             else:
-                if self.MaxNLocator._integer:
+                if self._integer:
                     val = locs[0]
                 else:
                     val = locs[-1]
@@ -732,13 +737,13 @@ class ScalarFormatter(Formatter):
                 oom = 0
             else:
                 oom = math.floor(math.log10(val))
+                print("oom = " + str(oom))
         if oom <= self._powerlimits[0]:
             self.orderOfMagnitude = oom
         elif oom >= self._powerlimits[1]:
             self.orderOfMagnitude = oom
         else:
             self.orderOfMagnitude = 0
-
 
     def _set_format(self, vmin, vmax):
         # set the format string to format all the ticklabels
@@ -759,7 +764,8 @@ class ScalarFormatter(Formatter):
             # We needed the end points only for the loc_range calculation.
             locs = locs[:-2]
         loc_range_oom = int(math.floor(math.log10(loc_range)))
-        # first estimate:
+        print("loc_range_oom = " + str(loc_range_oom))
+        # first estimate
         sigfigs = max(0, 3 - loc_range_oom)
         # refined estimate:
         thresh = 1e-3 * 10 ** loc_range_oom
@@ -768,7 +774,8 @@ class ScalarFormatter(Formatter):
                 sigfigs -= 1
             else:
                 break
-        sigfigs += 1
+        sigfigs += 1 #debug
+        sigfigs = loc_range_oom #debug
         self.format = '%1.' + str(sigfigs) + 'f'
         if self._usetex:
             self.format = '$%s$' % self.format
@@ -1929,6 +1936,9 @@ class MaxNLocator(Locator):
         if 'integer' in kwargs:
             self._integer = kwargs['integer']
 
+    def get_integer(self):
+        return self._integer
+
     def _raw_ticks(self, vmin, vmax):
         """
         Generate a list of tick locations including the range *vmin* to
@@ -1955,8 +1965,9 @@ class MaxNLocator(Locator):
             # For steps > 1, keep only integer values.
             igood = (steps >= 1) & (np.abs(steps - np.round(steps)) < 0.001)
             print(igood)
-            steps = steps[igood] * scale
+            steps = steps[igood]
             print(steps)
+        steps = steps * scale
         istep = np.nonzero(steps >= raw_step)[0][0]
 
         # Classic round_numbers mode may require a larger step.
