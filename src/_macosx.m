@@ -3,8 +3,10 @@
 #include <sys/socket.h>
 #include <Python.h>
 
+#ifndef PYPY
 /* Remove this once Python is fixed: https://bugs.python.org/issue23237 */
 #define PYOSINPUTHOOK_REPETITIVE 1
+#endif
 
 /* Proper way to check for the OS X version we are compiling for, from
    http://developer.apple.com/documentation/DeveloperTools/Conceptual/cross_development */
@@ -276,8 +278,13 @@ static void lazy_init(void) {
     backend_inited = true;
 
     NSApp = [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
+#ifndef PYPY
+    /* TODO: remove ifndef after the new PyPy with the PyOS_InputHook implementation
+    get released: https://bitbucket.org/pypy/pypy/commits/caaf91a */
     PyOS_InputHook = wait_for_stdin;
+#endif
 
     NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
     WindowServerConnectionManager* connectionManager = [WindowServerConnectionManager sharedManager];
@@ -1804,8 +1811,16 @@ static int _copy_agg_buffer(CGContextRef cr, PyObject *renderer)
     NSWindow* window = [self window];
     if ([window isKeyWindow]==false) return;
 
+    int x, y;
+    NSPoint location = [event locationInWindow];
+    location = [self convertPoint: location fromView: nil];
+    x = location.x * device_scale;
+    y = location.y * device_scale;
+
     gstate = PyGILState_Ensure();
-    result = PyObject_CallMethod(canvas, "enter_notify_event", "");
+    result = PyObject_CallMethod(canvas, "enter_notify_event", "O(ii)",
+            Py_None, x, y);
+
     if(result)
         Py_DECREF(result);
     else
@@ -2414,6 +2429,7 @@ Timer__timer_start(Timer* self, PyObject* args)
     CFRunLoopTimerRef timer;
     CFRunLoopTimerContext context;
     double milliseconds;
+    CFAbsoluteTime firstFire;
     CFTimeInterval interval;
     PyObject* attribute;
     PyObject* failure;
@@ -2438,12 +2454,15 @@ Timer__timer_start(Timer* self, PyObject* args)
         PyErr_SetString(PyExc_AttributeError, "Timer has no attribute '_single'");
         return NULL;
     }
+    // Need to tell when to first fire this timer, so get the current time
+    // and add an interval.
+    interval = milliseconds / 1000.0;
+    firstFire = CFAbsoluteTimeGetCurrent() + interval;
     switch (PyObject_IsTrue(attribute)) {
         case 1:
             interval = 0;
             break;
-        case 0:
-            interval = milliseconds / 1000.0;
+        case 0: // Set by default above
             break;
         case -1:
         default:
@@ -2467,7 +2486,7 @@ Timer__timer_start(Timer* self, PyObject* args)
     context.copyDescription = NULL;
     context.info = attribute;
     timer = CFRunLoopTimerCreate(kCFAllocatorDefault,
-                                 0,
+                                 firstFire,
                                  interval,
                                  0,
                                  0,
@@ -2563,11 +2582,10 @@ static PyTypeObject TimerType = {
     Timer_new,                 /* tp_new */
 };
 
+#ifndef COMPILING_FOR_10_6
 static bool verify_framework(void)
 {
     ProcessSerialNumber psn;
-    /* These methods are deprecated, but they don't require the app to
-       have started  */
     if (CGMainDisplayID()!=0
      && GetCurrentProcess(&psn)==noErr
      && SetFrontProcess(&psn)==noErr) return true;
@@ -2582,6 +2600,7 @@ static bool verify_framework(void)
         "Matplotlib FAQ for more information.");
     return false;
 }
+#endif
 
 static struct PyMethodDef methods[] = {
    {"event_loop_is_running",
@@ -2632,8 +2651,11 @@ PyObject* PyInit__macosx(void)
      || PyType_Ready(&TimerType) < 0)
         return NULL;
 
+#ifndef COMPILING_FOR_10_6
+    /* if >=10.6 invoke setActivationPolicy in lazy_init */
     if (!verify_framework())
         return NULL;
+#endif
 
     module = PyModule_Create(&moduledef);
     if (!module)

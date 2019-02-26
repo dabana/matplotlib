@@ -3,11 +3,17 @@
 Creating Colormaps in Matplotlib
 ********************************
 
-Creating and manipulating colormaps in Matplotlib is straight-forward
-using the class `.ListedColormap` and a Nx4 numpy array of values
-between 0 and 1 to represent the RGBA values of the colormap.  There
+Matplotlib has a number of built-in colormaps accessible via
+`.matplotlib.cm.get_cmap`.  There are also external libraries like
+palettable_ that have many extra colormaps.
+
+.. _palettable: https://jiffyclub.github.io/palettable/
+
+However, we often want to create or manipulate colormaps in Matplotlib.
+This can be done using the class `.ListedColormap` and a Nx4 numpy array of
+values between 0 and 1 to represent the RGBA values of the colormap.  There
 is also a `.LinearSegmentedColormap` class that allows colormaps to be
-specified with far fewer anchor points defining segments, and linearly
+specified with a few anchor points defining segments, and linearly
 interpolating between the anchor points.
 
 Getting colormaps and accessing their values
@@ -22,11 +28,9 @@ use a modest value of 12 so there are not a lot of values to look at.
 """
 
 import numpy as np
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
-from collections import OrderedDict
 
 viridis = cm.get_cmap('viridis', 12)
 print(viridis)
@@ -177,7 +181,7 @@ plot_linearmap(cdict)
 # and for values passed to the colormap between ``x[i]`` and ``x[i+1]``,
 # the interpolation is between ``yright[i]`` and ``yleft[i+1]``.
 #
-# In the example below there is a discontiuity in red at 0.5.  The
+# In the example below there is a discontinuity in red at 0.5.  The
 # interpolation between 0 and 0.5 goes from 0.3 to 1, and between 0.5 and 1
 # it goes from 0.9 to 1.  Note that red[0, 1], and red[2, 2] are both
 # superfluous to the interpolation because red[0, 1] is the value to the

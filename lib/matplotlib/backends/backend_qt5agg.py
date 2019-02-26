@@ -1,5 +1,5 @@
 """
-Render to qt from agg
+Render to qt from agg.
 """
 
 import ctypes
@@ -31,16 +31,12 @@ class FigureCanvasQTAgg(FigureCanvasAgg, FigureCanvasQT):
             return
         self._draw_idle()  # Only does something if a draw is pending.
 
-        # if the canvas does not have a renderer, then give up and wait for
-        # FigureCanvasAgg.draw(self) to be called
+        # If the canvas does not have a renderer, then give up and wait for
+        # FigureCanvasAgg.draw(self) to be called.
         if not hasattr(self, 'renderer'):
             return
 
         painter = QtGui.QPainter(self)
-
-        if self._erase_before_paint:
-            painter.eraseRect(self.rect())
-            self._erase_before_paint = False
 
         rect = event.rect()
         left = rect.left()
@@ -55,6 +51,10 @@ class FigureCanvasQTAgg(FigureCanvasAgg, FigureCanvasQT):
         reg = self.copy_from_bbox(bbox)
         buf = cbook._unmultiplied_rgba8888_to_premultiplied_argb32(
             memoryview(reg))
+
+        # clear the widget canvas
+        painter.eraseRect(rect)
+
         qimage = QtGui.QImage(buf, buf.shape[1], buf.shape[0],
                               QtGui.QImage.Format_ARGB32_Premultiplied)
         if hasattr(qimage, 'setDevicePixelRatio'):
@@ -64,7 +64,7 @@ class FigureCanvasQTAgg(FigureCanvasAgg, FigureCanvasQT):
         painter.drawImage(origin / self._dpi_ratio, qimage)
         # Adjust the buf reference count to work around a memory
         # leak bug in QImage under PySide on Python 3.
-        if QT_API == 'PySide':
+        if QT_API in ('PySide', 'PySide2'):
             ctypes.c_long.from_address(id(buf)).value = 1
 
         self._draw_rect_callback(painter)

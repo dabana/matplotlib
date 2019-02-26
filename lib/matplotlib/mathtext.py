@@ -15,12 +15,13 @@ arbitrary fonts, but results may vary without proper tweaking and
 metrics for those fonts.
 """
 
+from collections import namedtuple
 import functools
 from io import StringIO
+import logging
 import os
 import types
 import unicodedata
-import warnings
 
 import numpy as np
 
@@ -40,18 +41,24 @@ from matplotlib._mathtext_data import (latex_to_bakoma, latex_to_standard,
                                        tex2uni, latex_to_cmex,
                                        stix_virtual_fonts)
 
+_log = logging.getLogger(__name__)
+
 
 ##############################################################################
 # FONTS
 
 def get_unicode_index(symbol, math=True):
-    """get_unicode_index(symbol, [bool]) -> integer
+    r"""
+    Return the integer index (from the Unicode table) of *symbol*.
 
-Return the integer index (from the Unicode table) of symbol.  *symbol*
-can be a single unicode character, a TeX command (i.e. r'\\pi'), or a
-Type1 symbol name (i.e. 'phi').
-If math is False, the current symbol should be treated as a non-math symbol.
-"""
+    Parameters
+    ----------
+    symbol : str
+        A single unicode character, a TeX command (e.g. r'\pi') or a Type1
+        symbol name (e.g. 'phi').
+    math : bool, default is True
+        If False, always treat as a single unicode character.
+    """
     # for a non-math symbol, simply return its unicode index
     if not math:
         return ord(symbol)
@@ -216,9 +223,12 @@ class MathtextBackendBitmap(MathtextBackendAgg):
 
 class MathtextBackendPs(MathtextBackend):
     """
-    Store information to write a mathtext rendering to the PostScript
-    backend.
+    Store information to write a mathtext rendering to the PostScript backend.
     """
+
+    _PSResult = namedtuple(
+        "_PSResult", "width height depth pswriter used_characters")
+
     def __init__(self):
         self.pswriter = StringIO()
         self.lastfont = None
@@ -249,18 +259,19 @@ setfont
 
     def get_results(self, box, used_characters):
         ship(0, 0, box)
-        return (self.width,
-                self.height + self.depth,
-                self.depth,
-                self.pswriter,
-                used_characters)
+        return self._PSResult(self.width,
+                              self.height + self.depth,
+                              self.depth,
+                              self.pswriter,
+                              used_characters)
 
 
 class MathtextBackendPdf(MathtextBackend):
-    """
-    Store information to write a mathtext rendering to the PDF
-    backend.
-    """
+    """Store information to write a mathtext rendering to the PDF backend."""
+
+    _PDFResult = namedtuple(
+        "_PDFResult", "width height depth glyphs rects used_characters")
+
     def __init__(self):
         self.glyphs = []
         self.rects = []
@@ -277,12 +288,12 @@ class MathtextBackendPdf(MathtextBackend):
 
     def get_results(self, box, used_characters):
         ship(0, 0, box)
-        return (self.width,
-                self.height + self.depth,
-                self.depth,
-                self.glyphs,
-                self.rects,
-                used_characters)
+        return self._PDFResult(self.width,
+                               self.height + self.depth,
+                               self.depth,
+                               self.glyphs,
+                               self.rects,
+                               used_characters)
 
 
 class MathtextBackendSvg(MathtextBackend):
@@ -801,9 +812,8 @@ class UnicodeFonts(TruetypeFonts):
                 found_symbol = True
             except ValueError:
                 uniindex = ord('?')
-                warnings.warn(
-                    "No TeX to unicode mapping for {!a}.".format(sym),
-                    MathTextWarning)
+                _log.warning(
+                    "No TeX to unicode mapping for {!a}.".format(sym))
 
         fontname, uniindex = self._map_virtual_font(
             fontname, font_class, uniindex)
@@ -830,9 +840,8 @@ class UnicodeFonts(TruetypeFonts):
         if not found_symbol:
             if self.cm_fallback:
                 if isinstance(self.cm_fallback, BakomaFonts):
-                    warnings.warn(
-                        "Substituting with a symbol from Computer Modern.",
-                        MathTextWarning)
+                    _log.warning(
+                        "Substituting with a symbol from Computer Modern.")
                 if (fontname in ('it', 'regular') and
                         isinstance(self.cm_fallback, StixFonts)):
                     return self.cm_fallback._get_glyph(
@@ -844,13 +853,10 @@ class UnicodeFonts(TruetypeFonts):
                 if (fontname in ('it', 'regular')
                         and isinstance(self, StixFonts)):
                     return self._get_glyph('rm', font_class, sym, fontsize)
-                warnings.warn(
-                    "Font {!r} does not have a glyph for {!a} [U+{:x}], "
-                    "substituting with a dummy symbol.".format(
-                        new_fontname, sym, uniindex),
-                    MathTextWarning)
+                _log.warning("Font {!r} does not have a glyph for {!a} "
+                             "[U+{:x}], substituting with a dummy "
+                             "symbol.".format(new_fontname, sym, uniindex))
                 fontname = 'rm'
-                new_fontname = fontname
                 font = self._get_font(fontname)
                 uniindex = 0xA4  # currency char, for lack of anything better
                 glyphindex = font.get_char_index(uniindex)
@@ -1146,9 +1152,8 @@ class StandardPsFonts(Fonts):
             num = ord(glyph)
             found_symbol = True
         else:
-            warnings.warn(
-                "No TeX to built-in Postscript mapping for {!r}".format(sym),
-                MathTextWarning)
+            _log.warning(
+                "No TeX to built-in Postscript mapping for {!r}".format(sym))
 
         slanted = (fontname == 'it')
         font = self._get_font(fontname)
@@ -1157,14 +1162,13 @@ class StandardPsFonts(Fonts):
             try:
                 symbol_name = font.get_name_char(glyph)
             except KeyError:
-                warnings.warn(
+                _log.warning(
                     "No glyph in standard Postscript font {!r} for {!r}"
-                    .format(font.get_fontname(), sym),
-                    MathTextWarning)
+                    .format(font.get_fontname(), sym))
                 found_symbol = False
 
         if not found_symbol:
-            glyph = sym = '?'
+            glyph = '?'
             num = ord(glyph)
             symbol_name = font.get_name_char(glyph)
 
@@ -1592,9 +1596,8 @@ class List(Box):
             self.glue_ratio = 0.
         if o == 0:
             if len(self.children):
-                warnings.warn(
-                    "%s %s: %r" % (error_type, self.__class__.__name__, self),
-                    MathTextWarning)
+                _log.warning("%s %s: %r",
+                             error_type, self.__class__.__name__, self)
 
     def shrink(self):
         for child in self.children:
@@ -2698,6 +2701,7 @@ class Parser(object):
                       r'\:'         : 0.22222,   # 4/18 em = 4 mu
                       r'\;'         : 0.27778,   # 5/18 em = 5 mu
                       r'\ '         : 0.33333,   # 6/18 em = 6 mu
+                      r'~'          : 0.33333,   # 6/18 em = 6 mu, nonbreakable
                       r'\enspace'   : 0.5,       # 9/18 em = 9 mu
                       r'\quad'      : 1,         # 1 em = 18 mu
                       r'\qquad'     : 2,         # 2 em = 36 mu
@@ -3019,7 +3023,7 @@ class Parser(object):
             return [result]
 
         # We remove kerning on the last character for consistency (otherwise
-        # it will compute kerning based on non-shrinked characters and may put
+        # it will compute kerning based on non-shrunk characters and may put
         # them too close together when superscripted)
         # We change the width of the last character to match the advance to
         # consider some fonts with weird metrics: e.g. stix's f has a width of
@@ -3179,6 +3183,8 @@ class Parser(object):
         return self._genfrac('', '', thickness,
                              self._math_style_dict['displaystyle'], num, den)
 
+    @cbook.deprecated("3.1", obj_type="mathtext command",
+                      alternative=r"\genfrac")
     def stackrel(self, s, loc, toks):
         assert len(toks) == 1
         assert len(toks[0]) == 2
@@ -3345,14 +3351,10 @@ class MathTextParser(object):
             font_output = StandardPsFonts(prop)
         else:
             backend = self._backend_mapping[self._output]()
-            fontset = rcParams['mathtext.fontset']
-            fontset_class = self._font_type_mapping.get(fontset.lower())
-            if fontset_class is not None:
-                font_output = fontset_class(prop, backend)
-            else:
-                raise ValueError(
-                    "mathtext.fontset must be either 'cm', 'dejavuserif', "
-                    "'dejavusans', 'stix', 'stixsans', or 'custom'")
+            fontset = rcParams['mathtext.fontset'].lower()
+            cbook._check_in_list(self._font_type_mapping, fontset=fontset)
+            fontset_class = self._font_type_mapping[fontset]
+            font_output = fontset_class(prop, backend)
 
         fontsize = prop.get_size_in_points()
 

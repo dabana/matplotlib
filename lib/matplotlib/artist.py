@@ -1,6 +1,8 @@
 from collections import OrderedDict, namedtuple
 from functools import wraps
 import inspect
+import logging
+from numbers import Number
 import re
 import warnings
 
@@ -11,22 +13,8 @@ from . import cbook, docstring, rcParams
 from .path import Path
 from .transforms import (Bbox, IdentityTransform, Transform, TransformedBbox,
                          TransformedPatchPath, TransformedPath)
-# Note, matplotlib artists use the doc strings for set and get
-# methods to enable the introspection methods of setp and getp.  Every
-# set_* method should have a docstring containing the line
-#
-# ACCEPTS: [ legal | values ]
-#
-# and aliases for setters and getters should have a docstring that
-# starts with 'alias for ', as in 'alias for set_somemethod'
-#
-# You may wonder why we use so much boiler-plate manually defining the
-# set_alias and get_alias functions, rather than using some clever
-# python trick.  The answer is that I need to be able to manipulate
-# the docstring, and there is no clever way to do that in python 2.2,
-# as far as I can see - see
-#
-# https://mail.python.org/pipermail/python-list/2004-October/242925.html
+
+_log = logging.getLogger(__name__)
 
 
 def allow_rasterization(draw):
@@ -72,8 +60,8 @@ class Artist(object):
 
     Typically, all visible elements in a figure are subclasses of Artist.
     """
-    @property
     @cbook.deprecated("3.1")
+    @property
     def aname(self):
         return 'Artist'
 
@@ -244,6 +232,9 @@ class Artist(object):
     def get_window_extent(self, renderer):
         """
         Get the axes bounding box in display space.
+
+        The bounding box' width and height are nonnegative.
+
         Subclasses should override for inclusion in the bounding box
         "tight" calculation. Default is to return an empty bounding
         box at 0, 0.
@@ -371,27 +362,8 @@ class Artist(object):
             self._transform = self._transform._as_mpl_transform(self.axes)
         return self._transform
 
-    @cbook.deprecated("2.2")
-    def hitlist(self, event):
-        """
-        List the children of the artist which contain the mouse event *event*.
-        """
-        L = []
-        try:
-            hascursor, info = self.contains(event)
-            if hascursor:
-                L.append(self)
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            print("while checking", self.__class__)
-
-        for a in self.get_children():
-            L.extend(a.hitlist(event))
-        return L
-
     def get_children(self):
-        r"""Return a list of the child `.Artist`\s this `.Artist` contains."""
+        r"""Return a list of the child `.Artist`\s of this `.Artist`."""
         return []
 
     def contains(self, mouseevent):
@@ -414,9 +386,9 @@ class Artist(object):
         --------
         set_contains, get_contains
         """
-        if callable(self._contains):
+        if self._contains is not None:
             return self._contains(self, mouseevent)
-        warnings.warn("'%s' needs 'contains' method" % self.__class__.__name__)
+        _log.warning("%r needs 'contains' method", self.__class__.__name__)
         return False, {}
 
     def set_contains(self, picker):
@@ -442,6 +414,8 @@ class Artist(object):
               implementation of the respective artist, but may provide
               additional information.
         """
+        if not callable(picker):
+            raise TypeError("picker is not a callable")
         self._contains = picker
 
     def get_contains(self):
@@ -462,9 +436,7 @@ class Artist(object):
         --------
         set_picker, get_picker, pick
         """
-        return (self.figure is not None and
-                self.figure.canvas is not None and
-                self._picker is not None)
+        return self.figure is not None and self._picker is not None
 
     def pick(self, mouseevent):
         """
@@ -548,11 +520,6 @@ class Artist(object):
         set_picker, pickable, pick
         """
         return self._picker
-
-    @cbook.deprecated("2.2", "artist.figure is not None")
-    def is_figure_set(self):
-        """Returns whether the artist is assigned to a `.Figure`."""
-        return self.figure is not None
 
     def get_url(self):
         """Return the url."""
@@ -866,7 +833,8 @@ class Artist(object):
         rasterized : bool or None
         """
         if rasterized and not hasattr(self.draw, "_supports_rasterization"):
-            warnings.warn("Rasterization of '%s' will be ignored" % self)
+            cbook._warn_external(
+                "Rasterization of '%s' will be ignored" % self)
 
         self._rasterized = rasterized
 
@@ -981,7 +949,8 @@ class Artist(object):
             else:
                 func = getattr(self, 'set_' + k, None)
                 if not callable(func):
-                    raise AttributeError('Unknown property %s' % k)
+                    raise AttributeError('{!r} object has no property {!r}'
+                                         .format(type(self).__name__, k))
                 return func(v)
 
         with cbook._setattr_cm(self, eventson=False):
@@ -1034,16 +1003,16 @@ class Artist(object):
     @property
     def sticky_edges(self):
         """
-        `x` and `y` sticky edge lists.
+        ``x`` and ``y`` sticky edge lists for autoscaling.
 
         When performing autoscaling, if a data limit coincides with a value in
         the corresponding sticky_edges list, then no margin will be added--the
-        view limit "sticks" to the edge. A typical usecase is histograms,
+        view limit "sticks" to the edge. A typical use case is histograms,
         where one usually expects no margin on the bottom edge (0) of the
         histogram.
 
-        This attribute cannot be assigned to; however, the `x` and `y` lists
-        can be modified in place as needed.
+        This attribute cannot be assigned to; however, the ``x`` and ``y``
+        lists can be modified in place as needed.
 
         Examples
         --------
@@ -1076,12 +1045,12 @@ class Artist(object):
         return ArtistInspector(self).properties()
 
     def set(self, **kwargs):
-        """A property batch setter. Pass *kwargs* to set properties.
-        """
+        """A property batch setter.  Pass *kwargs* to set properties."""
+        kwargs = cbook.normalize_kwargs(
+            kwargs, getattr(type(self), "_alias_map", {}))
         props = OrderedDict(
             sorted(kwargs.items(), reverse=True,
                    key=lambda x: (self._prop_order.get(x[0], 0), x[0])))
-
         return self.update(props)
 
     def findobj(self, match=None, include_self=True):
@@ -1129,20 +1098,57 @@ class Artist(object):
 
     def get_cursor_data(self, event):
         """
-        Get the cursor data for a given event.
+        Return the cursor data for a given event.
+
+        .. note::
+            This method is intended to be overridden by artist subclasses.
+            As an end-user of Matplotlib you will most likely not call this
+            method yourself.
+
+        Cursor data can be used by Artists to provide additional context
+        information for a given event. The default implementation just returns
+        *None*.
+
+        Subclasses can override the method and return arbitrary data. However,
+        when doing so, they must ensure that `.format_cursor_data` can convert
+        the data to a string representation.
+
+        The only current use case is displaying the z-value of an `.AxesImage`
+        in the status bar of a plot window, while moving the mouse.
+
+        Parameters
+        ----------
+        event : `matplotlib.backend_bases.MouseEvent`
+
+        See Also
+        --------
+        format_cursor_data
+
         """
         return None
 
     def format_cursor_data(self, data):
         """
-        Return *cursor data* string formatted.
+        Return a string representation of *data*.
+
+        .. note::
+            This method is intended to be overridden by artist subclasses.
+            As an end-user of Matplotlib you will most likely not call this
+            method yourself.
+
+        The default implementation converts ints and floats and arrays of ints
+        and floats into a comma-separated string enclosed in square brackets.
+
+        See Also
+        --------
+        get_cursor_data
         """
         try:
             data[0]
         except (TypeError, IndexError):
             data = [data]
-        data_str = ', '.join('{:0.3g}'.format(item) for item in data if
-                   isinstance(item, (np.floating, np.integer, int, float)))
+        data_str = ', '.join('{:0.3g}'.format(item) for item in data
+                             if isinstance(item, Number))
         return "[" + data_str + "]"
 
     @property
@@ -1181,7 +1187,7 @@ class ArtistInspector(object):
                     o = o[0]
 
         self.oorig = o
-        if not inspect.isclass(o):
+        if not isinstance(o, type):
             o = type(o)
         self.o = o
 
@@ -1189,15 +1195,14 @@ class ArtistInspector(object):
 
     def get_aliases(self):
         """
-        Get a dict mapping *fullname* -> *alias* for each *alias* in
-        the :class:`~matplotlib.artist.ArtistInspector`.
+        Get a dict mapping property fullnames to sets of aliases for each alias
+        in the :class:`~matplotlib.artist.ArtistInspector`.
 
         e.g., for lines::
 
-          {'markerfacecolor': 'mfc',
-           'linewidth'      : 'lw',
+          {'markerfacecolor': {'mfc'},
+           'linewidth'      : {'lw'},
           }
-
         """
         names = [name for name in dir(self.o)
                  if name.startswith(('set_', 'get_'))
@@ -1207,9 +1212,9 @@ class ArtistInspector(object):
             func = getattr(self.o, name)
             if not self.is_alias(func):
                 continue
-            docstring = func.__doc__
-            fullname = docstring.replace('`', '')[10:]
-            aliases.setdefault(fullname[4:], {})[name[4:]] = None
+            propname = re.search("`({}.*)`".format(name[:4]),  # get_.*/set_.*
+                                 inspect.getdoc(func)).group(1)
+            aliases.setdefault(propname[4:], set()).add(name[4:])
         return aliases
 
     _get_valid_values_regex = re.compile(
@@ -1220,12 +1225,9 @@ class ArtistInspector(object):
         """
         Get the legal arguments for the setter associated with *attr*.
 
-        This is done by querying the docstring of the function *set_attr*
-        for a line that begins with "ACCEPTS" or ".. ACCEPTS":
-
-        e.g., for a line linestyle, return
-        "[ ``'-'`` | ``'--'`` | ``'-.'`` | ``':'`` | ``'steps'`` | ``'None'``
-        ]"
+        This is done by querying the docstring of the setter for a line that
+        begins with "ACCEPTS:" or ".. ACCEPTS:", and then by looking for a
+        numpydoc-style documentation for the setter's first argument.
         """
 
         name = 'set_%s' % attr
@@ -1233,7 +1235,7 @@ class ArtistInspector(object):
             raise AttributeError('%s has no function %s' % (self.o, name))
         func = getattr(self.o, name)
 
-        docstring = func.__doc__
+        docstring = inspect.getdoc(func)
         if docstring is None:
             return 'unknown'
 
@@ -1247,7 +1249,9 @@ class ArtistInspector(object):
         # Much faster than list(inspect.signature(func).parameters)[1],
         # although barely relevant wrt. matplotlib's total import time.
         param_name = func.__code__.co_varnames[1]
-        match = re.search("(?m)^ *{} : (.+)".format(param_name), docstring)
+        # We could set the presence * based on whether the parameter is a
+        # varargs (it can't be a varkwargs) but it's not really worth the it.
+        match = re.search(r"(?m)^ *\*?{} : (.+)".format(param_name), docstring)
         if match:
             return match.group(1)
 
@@ -1258,7 +1262,6 @@ class ArtistInspector(object):
         Get the attribute strings and a full path to where the setter
         is defined for all setters in an object.
         """
-
         setters = []
         for name in dir(self.o):
             if not name.startswith('set_'):
@@ -1283,10 +1286,8 @@ class ArtistInspector(object):
         Changes the full path to the public API path that is used
         in sphinx. This is needed for links to work.
         """
-
         replace_dict = {'_base._AxesBase': 'Axes',
-                      '_axes.Axes': 'Axes'}
-
+                        '_axes.Axes': 'Axes'}
         for key, value in replace_dict.items():
             source_class = source_class.replace(key, value)
         return source_class
@@ -1296,50 +1297,36 @@ class ArtistInspector(object):
         Get the attribute strings with setters for object.  e.g., for a line,
         return ``['markerfacecolor', 'linewidth', ....]``.
         """
-
         return [prop for prop, target in self._get_setters_and_targets()]
 
     def is_alias(self, o):
-        """
-        Return *True* if method object *o* is an alias for another
-        function.
-        """
-        ds = o.__doc__
+        """Return whether method object *o* is an alias for another method."""
+        ds = inspect.getdoc(o)
         if ds is None:
             return False
         return ds.startswith('Alias for ')
 
     def aliased_name(self, s):
         """
-        return 'PROPNAME or alias' if *s* has an alias, else return
-        PROPNAME.
+        Return 'PROPNAME or alias' if *s* has an alias, else return 'PROPNAME'.
 
         e.g., for the line markerfacecolor property, which has an
         alias, return 'markerfacecolor or mfc' and for the transform
-        property, which does not, return 'transform'
+        property, which does not, return 'transform'.
         """
-
-        if s in self.aliasd:
-            return s + ''.join([' or %s' % x
-                                for x in sorted(self.aliasd[s])])
-        else:
-            return s
+        aliases = ''.join(' or %s' % x for x in sorted(self.aliasd.get(s, [])))
+        return s + aliases
 
     def aliased_name_rest(self, s, target):
         """
-        return 'PROPNAME or alias' if *s* has an alias, else return
-        PROPNAME formatted for ReST
+        Return 'PROPNAME or alias' if *s* has an alias, else return 'PROPNAME',
+        formatted for ReST.
 
         e.g., for the line markerfacecolor property, which has an
         alias, return 'markerfacecolor or mfc' and for the transform
-        property, which does not, return 'transform'
+        property, which does not, return 'transform'.
         """
-
-        if s in self.aliasd:
-            aliases = ''.join([' or %s' % x
-                               for x in sorted(self.aliasd[s])])
-        else:
-            aliases = ''
+        aliases = ''.join(' or %s' % x for x in sorted(self.aliasd.get(s, [])))
         return ':meth:`%s <%s>`%s' % (s, target, aliases)
 
     def pprint_setters(self, prop=None, leadingspace=2):
@@ -1387,52 +1374,42 @@ class ArtistInspector(object):
             accepts = self.get_valid_values(prop)
             return '%s%s: %s' % (pad, prop, accepts)
 
-        attrs = self._get_setters_and_targets()
-        attrs.sort()
-        lines = []
+        attrs = sorted(self._get_setters_and_targets())
 
-        ########
         names = [self.aliased_name_rest(prop, target)
                  for prop, target in attrs]
         accepts = [self.get_valid_values(prop) for prop, target in attrs]
 
         col0_len = max(len(n) for n in names)
         col1_len = max(len(a) for a in accepts)
+        table_formatstr = pad + '   ' + '=' * col0_len + '   ' + '=' * col1_len
 
-        lines.append('')
-        lines.append(pad + '.. table::')
-        lines.append(pad + '   :class: property-table')
-        pad += '   '
-
-        table_formatstr = pad + '=' * col0_len + '   ' + '=' * col1_len
-
-        lines.append('')
-        lines.append(table_formatstr)
-        lines.append(pad + 'Property'.ljust(col0_len + 3) +
-                     'Description'.ljust(col1_len))
-        lines.append(table_formatstr)
-
-        lines.extend([pad + n.ljust(col0_len + 3) + a.ljust(col1_len)
-                      for n, a in zip(names, accepts)])
-
-        lines.append(table_formatstr)
-        lines.append('')
-        return lines
+        return [
+            '',
+            pad + '.. table::',
+            pad + '   :class: property-table',
+            '',
+            table_formatstr,
+            pad + '   ' + 'Property'.ljust(col0_len)
+            + '   ' + 'Description'.ljust(col1_len),
+            table_formatstr,
+            *[pad + '   ' + n.ljust(col0_len) + '   ' + a.ljust(col1_len)
+              for n, a in zip(names, accepts)],
+            table_formatstr,
+            '',
+        ]
 
     def properties(self):
-        """
-        return a dictionary mapping property name -> value
-        """
+        """Return a dictionary mapping property name -> value."""
         o = self.oorig
         getters = [name for name in dir(o)
                    if name.startswith('get_') and callable(getattr(o, name))]
         getters.sort()
-        d = dict()
+        d = {}
         for name in getters:
             func = getattr(o, name)
             if self.is_alias(func):
                 continue
-
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
@@ -1441,14 +1418,10 @@ class ArtistInspector(object):
                 continue
             else:
                 d[name[4:]] = val
-
         return d
 
     def pprint_getters(self):
-        """
-        Return the getters and actual values as list of strings.
-        """
-
+        """Return the getters and actual values as list of strings."""
         lines = []
         for name, val in sorted(self.properties().items()):
             if getattr(val, 'shape', ()) != () and len(val) > 6:
@@ -1474,7 +1447,7 @@ def getp(obj, property=None):
         getp(obj, 'linestyle')  # get the linestyle property
 
     *obj* is a :class:`Artist` instance, e.g.,
-    :class:`~matplotllib.lines.Line2D` or an instance of a
+    :class:`~matplotlib.lines.Line2D` or an instance of a
     :class:`~matplotlib.axes.Axes` or :class:`matplotlib.text.Text`.
     If the *property* is 'somename', this function returns
 
@@ -1586,7 +1559,7 @@ def setp(obj, *args, **kwargs):
 
 
 def kwdoc(artist):
-    """
+    r"""
     Inspect an `~matplotlib.artist.Artist` class and return
     information about its settable properties and their current values.
 

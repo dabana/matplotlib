@@ -49,6 +49,10 @@ import numpy as np
 from matplotlib import cbook
 
 
+class ConversionError(TypeError):
+    pass
+
+
 class AxisInfo(object):
     """
     Information to support default axis labeling, tick labeling, and
@@ -160,13 +164,16 @@ class Registry(dict):
             x = x.values
 
         # If x is an array, look inside the array for data with units
-        if isinstance(x, np.ndarray) and x.size:
+        if isinstance(x, np.ndarray):
+            # If there are no elements in x, infer the units from its dtype
+            if not x.size:
+                return self.get_converter(np.array([0], dtype=x.dtype))
             xravel = x.ravel()
             try:
                 # pass the first value of x that is not masked back to
                 # get_converter
                 if not np.all(xravel.mask):
-                    # some elements are not masked
+                    # Get first non-masked item
                     converter = self.get_converter(
                         xravel[np.argmin(xravel.mask)])
                     return converter
